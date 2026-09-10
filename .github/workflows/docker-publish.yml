@@ -1,4 +1,4 @@
-name: Build and Push to GHCR
+name: Build, Push to GHCR and Deploy to VPS
 
 on:
   push:
@@ -49,3 +49,31 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy-to-vps:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "${{ secrets.VPS_GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            docker stop glances || true
+            docker rm glances || true
+            docker run -d \
+              --name glances \
+              --restart=unless-stopped \
+              --pid=host \
+              --privileged \
+              -v /var/run/docker.sock:/var/run/docker.sock:ro \
+              -p 61208:61208 \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
